@@ -63,6 +63,178 @@ fn test_deposit_and_claim() {
 }
 
 #[test]
+fn test_revoke_by_sender() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, BatchVestingContract);
+    let client = BatchVestingContractClient::new(&env, &contract_id);
+
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
+    token_admin_client.mint(&sender, &1000);
+
+    let recipients = Vec::from_array(&env, [recipient.clone()]);
+    let amounts = Vec::from_array(&env, [100]);
+    let unlock_time = 1000;
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 0;
+    });
+
+    client.deposit(&sender, &token.address, &recipients, &amounts, &unlock_time);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 500;
+    });
+
+    client.revoke(&sender, &recipient, &token.address, &unlock_time);
+
+    assert_eq!(token.balance(&sender), 1000);
+    assert_eq!(token.balance(&contract_id), 0);
+}
+
+#[test]
+#[should_panic(expected = "No vesting found for recipient")]
+fn test_claim_after_revoke_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, BatchVestingContract);
+    let client = BatchVestingContractClient::new(&env, &contract_id);
+
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
+    token_admin_client.mint(&sender, &1000);
+
+    let recipients = Vec::from_array(&env, [recipient.clone()]);
+    let amounts = Vec::from_array(&env, [100]);
+    let unlock_time = 1000;
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 0;
+    });
+
+    client.deposit(&sender, &token.address, &recipients, &amounts, &unlock_time);
+    env.ledger().with_mut(|li| {
+        li.timestamp = 500;
+    });
+    client.revoke(&sender, &recipient, &token.address, &unlock_time);
+
+    client.claim(&recipient, &token.address);
+}
+
+#[test]
+fn test_revoke_by_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, BatchVestingContract);
+    let client = BatchVestingContractClient::new(&env, &contract_id);
+
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
+    token_admin_client.mint(&sender, &1000);
+
+    client.set_admin(&admin);
+
+    let recipients = Vec::from_array(&env, [recipient.clone()]);
+    let amounts = Vec::from_array(&env, [100]);
+    let unlock_time = 1000;
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 0;
+    });
+    client.deposit(&sender, &token.address, &recipients, &amounts, &unlock_time);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 500;
+    });
+
+    client.revoke(&admin, &recipient, &token.address, &unlock_time);
+
+    assert_eq!(token.balance(&sender), 1000);
+    assert_eq!(token.balance(&contract_id), 0);
+}
+
+#[test]
+#[should_panic(expected = "Unauthorized revoke attempt")]
+fn test_revoke_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, BatchVestingContract);
+    let client = BatchVestingContractClient::new(&env, &contract_id);
+
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
+    token_admin_client.mint(&sender, &1000);
+
+    let recipients = Vec::from_array(&env, [recipient.clone()]);
+    let amounts = Vec::from_array(&env, [100]);
+    let unlock_time = 1000;
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 0;
+    });
+
+    client.deposit(&sender, &token.address, &recipients, &amounts, &unlock_time);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 500;
+    });
+
+    client.revoke(&attacker, &recipient, &token.address, &unlock_time);
+}
+
+#[test]
+#[should_panic(expected = "Cannot revoke already vested funds")]
+fn test_revoke_already_vested() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, BatchVestingContract);
+    let client = BatchVestingContractClient::new(&env, &contract_id);
+
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let token_admin = Address::generate(&env);
+    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
+    token_admin_client.mint(&sender, &1000);
+
+    let recipients = Vec::from_array(&env, [recipient.clone()]);
+    let amounts = Vec::from_array(&env, [100]);
+    let unlock_time = 1000;
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 0;
+    });
+
+    client.deposit(&sender, &token.address, &recipients, &amounts, &unlock_time);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000;
+    });
+
+    client.revoke(&sender, &recipient, &token.address, &unlock_time);
+}
+
+#[test]
 #[should_panic(expected = "Vesting is currently locked")]
 fn test_claim_too_early() {
     let env = Env::default();

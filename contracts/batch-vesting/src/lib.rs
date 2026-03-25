@@ -10,11 +10,32 @@ pub struct BatchVestingContract;
 pub struct VestingData {
     pub amount: i128,
     pub unlock_time: u64,
+    pub sender: Address,
 }
 
 #[contracttype]
 pub enum DataKey {
     Vesting(Address), // Recipient address
+    Admin,
+}
+
+impl BatchVestingContract {
+    fn get_admin(env: &Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::Admin)
+    }
+
+    fn set_admin_internal(env: &Env, admin: &Address) {
+        env.storage().persistent().set(&DataKey::Admin, admin);
+    }
+
+    fn is_authorized(env: &Env, caller: &Address, schedule_sender: &Address) -> bool {
+        let is_sender = caller == schedule_sender;
+        let is_admin = match Self::get_admin(env) {
+            Some(a) => caller == &a,
+            None => false,
+        };
+        is_sender || is_admin
+    }
 }
 
 #[contractimpl]
@@ -56,6 +77,7 @@ impl BatchVestingContract {
             vestings.push_back(VestingData {
                 amount,
                 unlock_time,
+                sender: sender.clone(),
             });
 
             env.storage().persistent().set(&key, &vestings);
@@ -68,6 +90,85 @@ impl BatchVestingContract {
 
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&sender, &env.current_contract_address(), &total_amount);
+    }
+
+    /// Set admin for the contract. Only the first call can set the admin.
+    pub fn set_admin(env: Env, admin: Address) {
+        admin.require_auth();
+        if Self::get_admin(&env).is_some() {
+            panic!("Admin already set");
+        }
+        Self::set_admin_internal(&env, &admin);
+    }
+
+    /// Revoke unvested schedule by recipient/unlock time.
+    pub fn revoke(
+        env: Env,
+        caller: Address,
+        recipient: Address,
+        token: Address,
+        unlock_time: u64,
+    ) {
+        caller.require_auth();
+
+        let key = DataKey::Vesting(recipient.clone());
+        let vestings: Vec<VestingData> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic!("No vesting found for recipient"));
+
+        let current_time = env.ledger().timestamp();
+
+        let mut remaining = Vec::new(&env);
+        let mut revoked_amount: i128 = 0;
+        let mut schedule_sender: Option<Address> = None;
+        let mut item_found = false;
+
+        for i in 0..vestings.len() {
+            let vesting = vestings.get(i).unwrap();
+            if vesting.unlock_time == unlock_time && !item_found {
+                item_found = true;
+                if current_time >= vesting.unlock_time {
+                    panic!("Cannot revoke already vested funds");
+                }
+                if !Self::is_authorized(&env, &caller, &vesting.sender) {
+                    panic!("Unauthorized revoke attempt");
+                }
+
+                revoked_amount = vesting.amount;
+                schedule_sender = Some(vesting.sender.clone());
+            } else {
+                remaining.push_back(vesting);
+            }
+        }
+
+        if !item_found {
+            panic!("Vesting schedule not found");
+        }
+
+        if revoked_amount <= 0 {
+            panic!("Nothing to revoke");
+        }
+
+        if remaining.len() == 0 {
+            env.storage().persistent().remove(&key);
+        } else {
+            env.storage().persistent().set(&key, &remaining);
+        }
+
+        let sender = schedule_sender.unwrap();
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &sender,
+            &revoked_amount,
+        );
+
+        env.events().publish(
+            (Symbol::new(&env, "VestingRevoked"),),
+            (recipient, sender, revoked_amount, unlock_time),
+        );
     }
 
     /// Claim the vested funds.
