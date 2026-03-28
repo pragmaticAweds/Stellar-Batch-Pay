@@ -24,6 +24,7 @@ import {
   validatePaymentInstructions,
 } from "@/lib/stellar/validator";
 import type { PaymentInstruction } from "@/lib/stellar/types";
+import { getRecommendedFee } from "@/lib/stellar/fee-service";
 
 interface RequestBody {
   payments: PaymentInstruction[];
@@ -93,8 +94,8 @@ export async function POST(request: NextRequest) {
     const networkPassphrase =
       network === "testnet" ? Networks.TESTNET : Networks.PUBLIC;
 
-    // Use Horizon's fetchBaseFee directly
-    const dynamicFee = await server.fetchBaseFee();
+    // Fetch dynamic fee from Horizon using fee service
+    const dynamicFee = await getRecommendedFee(server);
 
     const xdrs: string[] = [];
 

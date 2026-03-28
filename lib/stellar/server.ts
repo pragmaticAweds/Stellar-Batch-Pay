@@ -25,6 +25,7 @@ import {
   validatePaymentInstruction,
   validateBatchConfig,
 } from "./validator";
+import { getRecommendedFee } from "./fee-service";
 
 /**
  * Utility to parse asset input into a StellarAsset instance
@@ -80,8 +81,8 @@ export class StellarService {
         this.keypair.publicKey(),
       );
 
-      // Fetch network base fee
-      const fee = await this.server.fetchBaseFee();
+      // Fetch dynamic fee from Horizon
+      const fee = await getRecommendedFee(this.server);
 
       // Create batches
       const batches = await createBatches(
